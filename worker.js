@@ -58,7 +58,11 @@ export default {
         return new Response("Kadad Bale AI Bot V1 - OK");
 
       if (request.method === "GET" && url.pathname === "/health")
-        return json({ ok: true, model: AI_MODEL });
+        return json({
+          ok: true,
+          model: AI_MODEL,
+          bindings: { AI: !!env.AI, DB: !!env.DB, BALE_BOT_TOKEN: !!env.BALE_BOT_TOKEN }
+        });
 
       if (request.method === "GET" && url.pathname === "/setup-webhook") {
         const webhookUrl = `${url.origin}/bale/webhook`;
@@ -252,8 +256,6 @@ async function listCustomReplies(env) {
 }
 
 async function handleUpdate(update, env) {
-  await initDB(env);
-
   const message = update?.message;
   const text = message?.text;
   const chatId = message?.chat?.id;
@@ -282,6 +284,9 @@ async function handleUpdate(update, env) {
     await sendMessage(env, chatId, "هر سوالی داری بپرس 🤖", message.message_id);
     return;
   }
+
+  await initDB(env);
+  await saveUser(env, user);
 
   if (isAdmin && await handleAdminMessage(env, chatId, text, message.message_id))
     return;
