@@ -125,7 +125,11 @@ async function bale(method, body, env) {
 }
 
 async function sendMessage(env, chatId, text, replyTo = null) {
-  const body = { chat_id: chatId, text: cleanText(text) };
+  const body = {
+    chat_id: chatId,
+    text: cleanText(text),
+    parse_mode: "Markdown"
+  };
   if (replyTo !== null && replyTo !== undefined)
     body.reply_to_message_id = replyTo;
   return bale("sendMessage", body, env);
