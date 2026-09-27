@@ -1,0 +1,15 @@
+name = "kadad-bale"
+main = "worker.js"
+compatibility_date = "2026-09-27"
+
+[ai]
+binding = "AI"
+
+[vars]
+ADMIN_USERNAME = "kavandad"
+
+# بعد از ساخت D1، database_id را اینجا قرار بده:
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "kadad-bale"
+# database_id = "YOUR_D1_DATABASE_ID"
