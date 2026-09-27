@@ -285,12 +285,15 @@ async function listCustomReplies(env) {
 
 async function handleUpdate(update, env) {
   const message = update?.message;
-  const text = message?.text;
   const chatId = message?.chat?.id;
   const user = message?.from;
 
-  if (!message || typeof text !== "string" || !text.trim() || !chatId || !user?.id)
+  if (!message || !chatId || !user?.id)
     return;
+
+  let text = typeof message.text === "string" ? message.text.trim() : "";
+  if (!text) text = await convertNonTextMessageToText(message, env);
+  if (!text || !text.trim()) return;
 
   // /start و /help باید حتی بدون دیتابیس هم کار کنند.
   const userId = String(user.id);
@@ -356,6 +359,113 @@ async function handleUpdate(update, env) {
   await sendMessage(env, chatId, answer, message.message_id);
 }
 
+
+async function convertNonTextMessageToText(message, env) {
+  const caption = String(message.caption || "").trim();
+
+  try {
+    const audio = message.voice || message.audio;
+    if (audio?.file_id) {
+      const file = await downloadBaleFile(env, audio.file_id);
+      const result = await env.AI.run("@cf/openai/whisper", { audio: file.bytes });
+      const transcript = result?.text || result?.result?.text || result?.transcription || "";
+      if (transcript.trim()) {
+        return [caption ? `متن همراه فایل: ${caption}` : "", "متن استخراج‌شده از صدا:", transcript.trim()]
+          .filter(Boolean).join("\n");
+      }
+      return caption || "یک فایل صوتی دریافت شد، اما متن قابل استخراج از آن پیدا نشد.";
+    }
+
+    const photo = Array.isArray(message.photo) && message.photo.length
+      ? message.photo[message.photo.length - 1] : null;
+    if (photo?.file_id) {
+      const file = await downloadBaleFile(env, photo.file_id);
+      const result = await env.AI.run("@cf/llava-hf/llava-1.5-7b-hf", {
+        image: file.bytes,
+        description: "متن داخل تصویر را تا حد ممکن دقیق استخراج کن. اگر متن ندارد، محتوای تصویر را کوتاه و دقیق توضیح بده. فقط متن استخراج‌شده یا توضیح را برگردان."
+      });
+      const extracted = result?.description || result?.response || result?.result?.description || result?.result?.response || "";
+      if (extracted.trim()) {
+        return [caption ? `متن همراه تصویر: ${caption}` : "", "متن/محتوای استخراج‌شده از تصویر:", extracted.trim()]
+          .filter(Boolean).join("\n");
+      }
+      return caption || "یک تصویر دریافت شد، اما متن قابل استخراج از آن پیدا نشد.";
+    }
+
+    const document = message.document;
+    if (document?.file_id) {
+      const file = await downloadBaleFile(env, document.file_id);
+      const fileName = String(document.file_name || file.path || "unknown");
+      const mimeType = String(document.mime_type || file.mimeType || "application/octet-stream");
+      const lowerName = fileName.toLowerCase();
+
+      if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
+        const pdfText = extractBasicPdfText(file.bytes);
+        if (pdfText.trim()) {
+          return [caption ? `متن همراه PDF: ${caption}` : "", `متن استخراج‌شده از PDF (${fileName}):`, pdfText.trim()]
+            .filter(Boolean).join("\n");
+        }
+        return [caption ? `متن همراه PDF: ${caption}` : "", `PDF دریافت شد: ${fileName}`,
+          "این PDF متن قابل استخراج مستقیم نداشت؛ احتمالاً تصویری/اسکن‌شده است."]
+          .filter(Boolean).join("\n");
+      }
+
+      const byteInfo = bytesToHexPreview(file.bytes, 16384);
+      return [caption ? `متن همراه فایل: ${caption}` : "", `فایل دریافت شد: ${fileName}`,
+        `MIME: ${mimeType}`, `حجم: ${file.bytes.byteLength} bytes`,
+        "نمایش بایت‌های ابتدایی فایل:", "```", byteInfo, "```"]
+        .filter(Boolean).join("\n");
+    }
+
+    return caption || "یک ورودی غیرمتنی دریافت شد، اما نوع آن برای استخراج متن پشتیبانی نمی‌شود.";
+  } catch (error) {
+    console.error("NON-TEXT INPUT ERROR:", error);
+    return caption || "⚠️ فایل/رسانه دریافت شد، اما تبدیل آن به متن با خطا مواجه شد.";
+  }
+}
+
+async function downloadBaleFile(env, fileId) {
+  const info = await bale("getFile", { file_id: fileId }, env);
+  const path = info?.result?.file_path;
+  if (!path) throw new Error("Bale برای فایل file_path برنگرداند.");
+  const response = await fetch(`https://tapi.bale.ai/file/bot${env.BALE_BOT_TOKEN}/${path}`);
+  if (!response.ok) throw new Error(`Bale file download failed: ${response.status}`);
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    path,
+    mimeType: response.headers.get("content-type") || "application/octet-stream"
+  };
+}
+
+function bytesToHexPreview(bytes, maxBytes = 16384) {
+  const limit = Math.min(bytes.byteLength, maxBytes);
+  const lines = [];
+  for (let offset = 0; offset < limit; offset += 16) {
+    const end = Math.min(offset + 16, limit);
+    const hex = [];
+    for (let i = offset; i < end; i++) hex.push(bytes[i].toString(16).padStart(2, "0"));
+    const ascii = [];
+    for (let i = offset; i < end; i++) {
+      const b = bytes[i];
+      ascii.push(b >= 32 && b <= 126 ? String.fromCharCode(b) : ".");
+    }
+    lines.push(offset.toString(16).padStart(8, "0") + "  " + hex.join(" ").padEnd(47, " ") + "  " + ascii.join(""));
+  }
+  if (bytes.byteLength > limit) lines.push(`... ${bytes.byteLength - limit} bytes دیگر نمایش داده نشد.`);
+  return lines.join("\n");
+}
+
+function extractBasicPdfText(bytes) {
+  const chunk = new TextDecoder("latin1").decode(bytes);
+  const matches = chunk.match(/\((?:\\.|[^\\)])*\)\s*Tj/g) || [];
+  let raw = "";
+  for (const match of matches) {
+    const value = match.replace(/\)\s*Tj$/, "").replace(/^\(/, "")
+      .replace(/\\([\\()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
+    raw += value + "\n";
+  }
+  return raw.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 30000);
+}
 async function handleAdminMessage(env, chatId, text, replyTo) {
   const normalized = normalize(text);
 
