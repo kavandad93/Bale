@@ -327,6 +327,29 @@ async function handleAdminMessage(env, chatId, text, replyTo) {
     return true;
   }
 
+  // دستور سریع ادمین: /Rule متن قانون
+  // همچنین /Rule می‌تواند با Markdown/متن سفارشی استفاده شود.
+  if (/^\\/rule(?:\\s+|$)/i.test(text.trim())) {
+    const rule = text.trim().replace(/^\\/rule\\s*/i, "").trim();
+
+    if (!rule) {
+      await sendMessage(env, chatId, "⚠️ بعد از /Rule متن قانون را بنویس.", replyTo);
+      return true;
+    }
+
+    const current = await getSetting(env, "system_prompt", DEFAULT_SYSTEM_PROMPT);
+    const newRule = rule.startsWith("- ") ? rule : "- " + rule;
+    await setSetting(env, "system_prompt", current + "\\n\\n" + newRule);
+
+    await sendMessage(
+      env,
+      chatId,
+      "✅ قانون ثبت شد.\\n\\n" + rule,
+      replyTo
+    );
+    return true;
+  }
+
   if (
     normalized.includes("اضافه") ||
     normalized.includes("حذف") ||
