@@ -270,10 +270,25 @@ async function handleUpdate(update, env) {
 
   // /start و /help باید حتی بدون دیتابیس هم کار کنند.
   const userId = String(user.id);
-  const username = String(user.username || "").replace(/^@/, "").toLowerCase();
-  const adminUsername = String(env.ADMIN_USERNAME || "kavandad")
-    .replace(/^@/, "").toLowerCase();
-  const isAdmin = username === adminUsername;
+  const adminUsername = normalizeUsername(env.ADMIN_USERNAME || "kavandad");
+
+  // در بعضی آپدیت‌های Bale ممکن است username در یکی از فیلدهای
+  // جایگزین قرار بگیرد؛ فقط username را برای احراز ادمین قبول می‌کنیم.
+  const usernameCandidates = [
+    user?.username,
+    user?.user_name,
+    message?.sender?.username,
+    message?.author?.username
+  ];
+
+  // در چت خصوصی، username چت متعلق به همان کاربر است و fallback امنی است.
+  if (message?.chat?.type === "private" && String(message?.chat?.id) === String(user?.id)) {
+    usernameCandidates.push(message?.chat?.username);
+  }
+
+  const isAdmin = usernameCandidates.some(
+    value => normalizeUsername(value) === adminUsername
+  );
 
   if (normalize(text) === "/start") {
     await sendMessage(env, chatId,
@@ -506,6 +521,15 @@ async function runAI(env, messages, temperature, maxTokens) {
 
   return response.trim();
 }
+
+
+function normalizeUsername(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
 function normalize(text) {
   return String(text || "")
     .trim().toLowerCase()
