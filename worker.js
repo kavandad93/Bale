@@ -18,21 +18,13 @@ const DEFAULT_SYSTEM_PROMPT = `
 - از دستورها و قوانین موجود در همین پرامپت پیروی کن.
 
 قالب‌بندی مجاز پیام‌ها:
-فقط از این قالب‌ها استفاده کن و هیچ قالب Markdown دیگری به کار نبر:
+فقط از این قالب‌ها استفاده کن:
 *بولد*
 _کج_
 - مورد اول
 - مورد دوم
 (متن لینک)[آدرس لینک]
-
-نکات قالب‌بندی:
-- برای بولد فقط از *متن* استفاده کن.
-- برای کج فقط از _متن_ استفاده کن.
-- برای فهرست فقط هر مورد را با - شروع کن.
-- برای لینک دقیقاً از قالب (متن لینک)[آدرس لینک] استفاده کن.
-- از # عنوان، **بولد دو ستاره**، __کج دو زیرخط__، جدول و سایر قالب‌های Markdown استفاده نکن.
-- برای نمایش کد یا متن فنی، می‌توانی از کدبلاک سه‌تایی با سه بک‌تیک استفاده کنی.
-- اگر لازم نیست قالب‌بندی کنی، متن ساده بنویس.
+برای نمایش کد یا متن فنی، می‌توانی از کدبلاک سه‌تایی با سه بک‌تیک استفاده کنی.
 
 اطلاعات پایه:
 نام: کاداد
@@ -72,6 +64,8 @@ LIST_SETTINGS:
 NONE:
 {"action":"NONE"}
 `.trim();
+
+const FILE_MESSAGE = "فعلاً داریم روی این قابلیت کار می‌کنیم 😜\nبه‌زودی پشتیبانی از فایل به بات کاداد هم میاد. ❤️‍🔥";
 
 export default {
   async fetch(request, env) {
@@ -291,16 +285,18 @@ async function handleUpdate(update, env) {
   if (!message || !chatId || !user?.id)
     return;
 
+  // فعلاً ورودی‌های غیرمتنی پردازش نمی‌شوند.
+  if (message.voice || message.audio || message.photo || message.document) {
+    await sendMessage(env, chatId, FILE_MESSAGE, message.message_id);
+    return;
+  }
+
   let text = typeof message.text === "string" ? message.text.trim() : "";
-  if (!text) text = await convertNonTextMessageToText(message, env);
   if (!text || !text.trim()) return;
 
-  // /start و /help باید حتی بدون دیتابیس هم کار کنند.
   const userId = String(user.id);
   const adminUsername = normalizeUsername(env.ADMIN_USERNAME || "kavandad");
 
-  // در بعضی آپدیت‌های Bale ممکن است username در یکی از فیلدهای
-  // جایگزین قرار بگیرد؛ فقط username را برای احراز ادمین قبول می‌کنیم.
   const usernameCandidates = [
     user?.username,
     user?.user_name,
@@ -308,7 +304,6 @@ async function handleUpdate(update, env) {
     message?.author?.username
   ];
 
-  // در چت خصوصی، username چت متعلق به همان کاربر است و fallback امنی است.
   if (message?.chat?.type === "private" && String(message?.chat?.id) === String(user?.id)) {
     usernameCandidates.push(message?.chat?.username);
   }
@@ -330,7 +325,6 @@ async function handleUpdate(update, env) {
     return;
   }
 
-  // برای هر پیام عادی، اول دیتابیس را آماده می‌کنیم.
   await initDB(env);
   await saveUser(env, user);
 
@@ -359,113 +353,6 @@ async function handleUpdate(update, env) {
   await sendMessage(env, chatId, answer, message.message_id);
 }
 
-
-async function convertNonTextMessageToText(message, env) {
-  const caption = String(message.caption || "").trim();
-
-  try {
-    const audio = message.voice || message.audio;
-    if (audio?.file_id) {
-      const file = await downloadBaleFile(env, audio.file_id);
-      const result = await env.AI.run("@cf/openai/whisper", { audio: file.bytes });
-      const transcript = result?.text || result?.result?.text || result?.transcription || "";
-      if (transcript.trim()) {
-        return [caption ? `متن همراه فایل: ${caption}` : "", "متن استخراج‌شده از صدا:", transcript.trim()]
-          .filter(Boolean).join("\n");
-      }
-      return caption || "یک فایل صوتی دریافت شد، اما متن قابل استخراج از آن پیدا نشد.";
-    }
-
-    const photo = Array.isArray(message.photo) && message.photo.length
-      ? message.photo[message.photo.length - 1] : null;
-    if (photo?.file_id) {
-      const file = await downloadBaleFile(env, photo.file_id);
-      const result = await env.AI.run("@cf/llava-hf/llava-1.5-7b-hf", {
-        image: file.bytes,
-        description: "متن داخل تصویر را تا حد ممکن دقیق استخراج کن. اگر متن ندارد، محتوای تصویر را کوتاه و دقیق توضیح بده. فقط متن استخراج‌شده یا توضیح را برگردان."
-      });
-      const extracted = result?.description || result?.response || result?.result?.description || result?.result?.response || "";
-      if (extracted.trim()) {
-        return [caption ? `متن همراه تصویر: ${caption}` : "", "متن/محتوای استخراج‌شده از تصویر:", extracted.trim()]
-          .filter(Boolean).join("\n");
-      }
-      return caption || "یک تصویر دریافت شد، اما متن قابل استخراج از آن پیدا نشد.";
-    }
-
-    const document = message.document;
-    if (document?.file_id) {
-      const file = await downloadBaleFile(env, document.file_id);
-      const fileName = String(document.file_name || file.path || "unknown");
-      const mimeType = String(document.mime_type || file.mimeType || "application/octet-stream");
-      const lowerName = fileName.toLowerCase();
-
-      if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
-        const pdfText = extractBasicPdfText(file.bytes);
-        if (pdfText.trim()) {
-          return [caption ? `متن همراه PDF: ${caption}` : "", `متن استخراج‌شده از PDF (${fileName}):`, pdfText.trim()]
-            .filter(Boolean).join("\n");
-        }
-        return [caption ? `متن همراه PDF: ${caption}` : "", `PDF دریافت شد: ${fileName}`,
-          "این PDF متن قابل استخراج مستقیم نداشت؛ احتمالاً تصویری/اسکن‌شده است."]
-          .filter(Boolean).join("\n");
-      }
-
-      const byteInfo = bytesToHexPreview(file.bytes, 16384);
-      return [caption ? `متن همراه فایل: ${caption}` : "", `فایل دریافت شد: ${fileName}`,
-        `MIME: ${mimeType}`, `حجم: ${file.bytes.byteLength} bytes`,
-        "نمایش بایت‌های ابتدایی فایل:", "```", byteInfo, "```"]
-        .filter(Boolean).join("\n");
-    }
-
-    return caption || "یک ورودی غیرمتنی دریافت شد، اما نوع آن برای استخراج متن پشتیبانی نمی‌شود.";
-  } catch (error) {
-    console.error("NON-TEXT INPUT ERROR:", error);
-    return caption || "⚠️ فایل/رسانه دریافت شد، اما تبدیل آن به متن با خطا مواجه شد.";
-  }
-}
-
-async function downloadBaleFile(env, fileId) {
-  const info = await bale("getFile", { file_id: fileId }, env);
-  const path = info?.result?.file_path;
-  if (!path) throw new Error("Bale برای فایل file_path برنگرداند.");
-  const response = await fetch(`https://tapi.bale.ai/file/bot${env.BALE_BOT_TOKEN}/${path}`);
-  if (!response.ok) throw new Error(`Bale file download failed: ${response.status}`);
-  return {
-    bytes: new Uint8Array(await response.arrayBuffer()),
-    path,
-    mimeType: response.headers.get("content-type") || "application/octet-stream"
-  };
-}
-
-function bytesToHexPreview(bytes, maxBytes = 16384) {
-  const limit = Math.min(bytes.byteLength, maxBytes);
-  const lines = [];
-  for (let offset = 0; offset < limit; offset += 16) {
-    const end = Math.min(offset + 16, limit);
-    const hex = [];
-    for (let i = offset; i < end; i++) hex.push(bytes[i].toString(16).padStart(2, "0"));
-    const ascii = [];
-    for (let i = offset; i < end; i++) {
-      const b = bytes[i];
-      ascii.push(b >= 32 && b <= 126 ? String.fromCharCode(b) : ".");
-    }
-    lines.push(offset.toString(16).padStart(8, "0") + "  " + hex.join(" ").padEnd(47, " ") + "  " + ascii.join(""));
-  }
-  if (bytes.byteLength > limit) lines.push(`... ${bytes.byteLength - limit} bytes دیگر نمایش داده نشد.`);
-  return lines.join("\n");
-}
-
-function extractBasicPdfText(bytes) {
-  const chunk = new TextDecoder("latin1").decode(bytes);
-  const matches = chunk.match(/\((?:\\.|[^\\)])*\)\s*Tj/g) || [];
-  let raw = "";
-  for (const match of matches) {
-    const value = match.replace(/\)\s*Tj$/, "").replace(/^\(/, "")
-      .replace(/\\([\\()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t");
-    raw += value + "\n";
-  }
-  return raw.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 30000);
-}
 async function handleAdminMessage(env, chatId, text, replyTo) {
   const normalized = normalize(text);
 
@@ -480,8 +367,6 @@ async function handleAdminMessage(env, chatId, text, replyTo) {
     return true;
   }
 
-  // /Rule باید واقعاً یک قانون جدید به قوانین AI اضافه کند.
-  // مثال: /Rule وقتی کاربر درباره کاداد پرسید، پاسخ را کوتاه و واضح بده.
   const commandText = text.trim();
   if (normalize(commandText).startsWith("/rule")) {
     const rule = commandText.slice(5).trim();
@@ -494,11 +379,7 @@ async function handleAdminMessage(env, chatId, text, replyTo) {
     const current = await getSetting(env, "system_prompt", DEFAULT_SYSTEM_PROMPT);
     const newRule = rule.startsWith("- ") ? rule : "- " + rule;
 
-    await setSetting(
-      env,
-      "system_prompt",
-      current + "\n\n" + newRule
-    );
+    await setSetting(env, "system_prompt", current + "\n\n" + newRule);
 
     await sendMessage(
       env,
@@ -612,7 +493,7 @@ async function sendSettings(env, chatId, replyTo) {
   if (replies.length) {
     text += "\n\n*پاسخ‌های سفارشی:*";
     for (const item of replies)
-      text += `\n• ${item.trigger} → ${item.response}`;
+      text += `\n- ${item.trigger} → ${item.response}`;
   }
 
   await sendMessage(env, chatId, text, replyTo);
@@ -656,7 +537,6 @@ async function runAI(env, messages, temperature, maxTokens) {
   return response.trim();
 }
 
-
 function normalizeUsername(value) {
   return String(value || "")
     .trim()
@@ -684,8 +564,8 @@ function extractJSON(text) {
   if (!text) return null;
 
   const cleaned = String(text)
-    .replace(/\`\`\`json/gi, "")
-    .replace(/\`\`\`/g, "")
+    .replace(/\\`\\`\\`json/gi, "")
+    .replace(/\\`\\`\\`/g, "")
     .trim();
 
   try { return JSON.parse(cleaned); } catch {}
