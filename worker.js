@@ -459,6 +459,8 @@ async function runAI(env, messages, temperature, maxTokens) {
     }
   });
 
+  console.log("AI RESPONSE:", JSON.stringify(result));
+
   const response =
     result?.response ??
     result?.choices?.[0]?.message?.content ??
@@ -466,13 +468,11 @@ async function runAI(env, messages, temperature, maxTokens) {
     result?.result?.choices?.[0]?.message?.content;
 
   if (typeof response !== "string" || !response.trim()) {
-    console.error("WORKERS AI RAW RESPONSE:", JSON.stringify(result));
     throw new Error("Workers AI پاسخ متنی برنگرداند.");
   }
 
   return response.trim();
 }
-
 function normalize(text) {
   return String(text || "")
     .trim().toLowerCase()
