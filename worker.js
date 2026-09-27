@@ -264,8 +264,7 @@ async function handleUpdate(update, env) {
   if (!message || typeof text !== "string" || !text.trim() || !chatId || !user?.id)
     return;
 
-  await saveUser(env, user);
-
+  // /start و /help باید حتی بدون دیتابیس هم کار کنند.
   const userId = String(user.id);
   const username = String(user.username || "").replace(/^@/, "").toLowerCase();
   const adminUsername = String(env.ADMIN_USERNAME || "kavandad")
@@ -285,6 +284,7 @@ async function handleUpdate(update, env) {
     return;
   }
 
+  // برای هر پیام عادی، اول دیتابیس را آماده می‌کنیم.
   await initDB(env);
   await saveUser(env, user);
 
