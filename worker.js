@@ -453,12 +453,22 @@ async function runAI(env, messages, temperature, maxTokens) {
     messages,
     max_tokens: maxTokens,
     temperature,
-    top_p: 0.9
+    top_p: 0.9,
+    chat_template_kwargs: {
+      enable_thinking: false
+    }
   });
 
-  const response = result?.response;
-  if (typeof response !== "string" || !response.trim())
+  const response =
+    result?.response ??
+    result?.choices?.[0]?.message?.content ??
+    result?.result?.response ??
+    result?.result?.choices?.[0]?.message?.content;
+
+  if (typeof response !== "string" || !response.trim()) {
+    console.error("WORKERS AI RAW RESPONSE:", JSON.stringify(result));
     throw new Error("Workers AI پاسخ متنی برنگرداند.");
+  }
 
   return response.trim();
 }
