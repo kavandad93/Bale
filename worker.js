@@ -174,7 +174,7 @@ async function initDB(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS custom_replies (
       id INTEGER PRIMARY KEY AUTOINCREMENT, trigger TEXT NOT NULL UNIQUE,
       response TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-    )`)
+    )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS user_files (
       id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
       file_name TEXT NOT NULL, extension TEXT NOT NULL, content TEXT NOT NULL,
