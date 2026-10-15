@@ -595,27 +595,81 @@ function getSearchQuery(text) {
   return String(text || "").trim().replace(/^\/search\s*/i, "").trim() || String(text || "").trim();
 }
 async function webSearch(query) {
-  const response = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query), {
-    headers: { "accept": "text/html", "user-agent": "Mozilla/5.0 (compatible; KadadBaleBot/1.0)" }
-  });
-  if (!response.ok) throw new Error("Search HTTP " + response.status);
-  const html = (await response.text()).slice(0, 700000);
+  const q = encodeURIComponent(String(query || "").trim());
+  const providers = [
+    {
+      name: "DuckDuckGo",
+      url: "https://html.duckduckgo.com/html/?q=" + q,
+      parse: html => parseSearchAnchors(html, /<a\\b(?=[^>]*\\bclass=["'][^"']*\\bresult__a\\b[^"']*["'])[^>]*>[\\s\\S]*?<\\/a>/gi, "duckduckgo")
+    },
+    {
+      name: "DuckDuckGo Lite",
+      url: "https://lite.duckduckgo.com/lite/?q=" + q,
+      parse: html => parseSearchAnchors(html, /<a\\b[^>]*href=["'][^"']+["'][^>]*>[\\s\\S]*?<\\/a>/gi, "duckduckgo")
+    },
+    {
+      name: "Bing",
+      url: "https://www.bing.com/search?q=" + q,
+      parse: html => parseSearchAnchors(html, /<li\\b[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>[\\s\\S]*?<\\/li>/gi, "bing")
+    }
+  ];
+
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.url, {
+        headers: {
+          "accept": "text/html,application/xhtml+xml",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+        },
+        cf: { cacheTtl: 300, cacheEverything: true }
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const html = (await response.text()).slice(0, 900000);
+      const results = provider.parse(html);
+      if (results.length) {
+        console.log("WEB SEARCH OK:", provider.name, results.length);
+        return results.slice(0, 5);
+      }
+      errors.push(provider.name + ": no results parsed");
+    } catch (error) {
+      errors.push(provider.name + ": " + String(error?.message || error));
+      console.error("SEARCH PROVIDER ERROR:", provider.name, error);
+    }
+  }
+  throw new Error(errors.join("; ") || "No search results");
+}
+
+function parseSearchAnchors(html, pattern, provider) {
+  const blocks = String(html || "").match(pattern) || [];
   const results = [];
-  const links = html.match(/<a[^>]*class="result__a"[^>]*>[\s\S]*?<\/a>/gi) || [];
-  for (const link of links) {
-    const match = link.match(/href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
-    if (!match) continue;
-    let href = decodeHtml(match[1]);
+  for (const block of blocks) {
+    let hrefMatch;
+    let titleMatch;
+    if (provider === "bing") {
+      hrefMatch = block.match(/<h2[^>]*>\\s*<a[^>]*href=["']([^"']+)["'][^>]*>/i);
+      titleMatch = block.match(/<h2[^>]*>\\s*<a[^>]*>([\\s\\S]*?)<\\/a>/i);
+    } else {
+      hrefMatch = block.match(/\\bhref=["']([^"']+)["']/i);
+      titleMatch = block.match(/>([\\s\\S]*?)<\\/a>\\s*$/i);
+    }
+    if (!hrefMatch) continue;
+
+    let href = decodeHtml(hrefMatch[1]);
     try {
       const parsed = new URL(href.startsWith("//") ? "https:" + href : href);
-      if (parsed.hostname.includes("duckduckgo.com") && parsed.pathname === "/l/") href = parsed.searchParams.get("uddg") || href;
+      if (parsed.hostname.includes("duckduckgo.com") && parsed.pathname === "/l/") {
+        href = parsed.searchParams.get("uddg") || href;
+      }
     } catch {}
-    if (!/^https?:\/\//i.test(href)) continue;
-    const title = stripHtml(decodeHtml(match[2]));
-    if (title && !results.some(r => r.url === href)) results.push({ title, url: href });
+    if (!/^https?:\\/\\//i.test(href)) continue;
+    if (/^(https?:\\/\\/)?(www\\.)?(bing\\.com|duckduckgo\\.com)\\//i.test(href)) continue;
+
+    const title = stripHtml(decodeHtml(titleMatch ? titleMatch[1] : ""));
+    if (!title || title.length < 2) continue;
+    if (!results.some(item => item.url === href)) results.push({ title, url: href });
     if (results.length >= 5) break;
   }
-  if (!results.length) throw new Error("No search results parsed");
   return results;
 }
 function formatSearchContext(query, results) {
