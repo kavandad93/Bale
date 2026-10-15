@@ -73,6 +73,15 @@ const FILE_MESSAGE = "این نوع فایل فعلاً قابل‌خواندن 
 const MAX_FILE_BYTES = 100 * 1024;
 const TEXT_FILE_EXTENSIONS = new Set(["txt","md","json","csv","tsv","log","js","mjs","cjs","ts","jsx","tsx","html","htm","css","xml","yaml","yml","py","php","sql","sh","toml","ini","conf"]);
 
+// Skill registry: skills are selected automatically from the user's intent, never invoked as chat commands.
+const SKILLS = [
+  {
+    name: "web_open",
+    description: "Open and inspect a website URL, retrieve its readable HTML/text, title, and status, then use that page content to answer the user's request.",
+    matches: shouldWebOpen
+  }
+];
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -359,23 +368,6 @@ async function handleUpdate(update, env) {
     return;
   }
 
-  // Open a website directly and return readable page content.
-  if (/^\/web_open(?:\s|$)/i.test(text)) {
-    const target = text.replace(/^\/web_open\s*/i, "").trim();
-    if (!target) {
-      await sendMessage(env, chatId, "🌐 بعد از /web_open آدرس کامل سایت را بنویس.\nمثال: /web_open https://example.com", message.message_id);
-      return;
-    }
-    try {
-      const page = await webOpen(target);
-      await sendMessage(env, chatId, "🌐 صفحه باز شد: " + page.url + "\nعنوان: " + (page.title || "بدون عنوان") + "\n\n" + page.text.slice(0, 12000), message.message_id);
-    } catch (error) {
-      console.error("WEB OPEN ERROR:", error);
-      await sendMessage(env, chatId, "⚠️ نتونستم این صفحه رو باز کنم: " + String(error?.message || error).slice(0, 500), message.message_id);
-    }
-    return;
-  }
-
   // Handle /search directly so the AI cannot mistake it for a hypothetical tool.
   if (/^\/search(?:\s|$)/i.test(text)) {
     const query = getSearchQuery(text);
@@ -424,8 +416,9 @@ async function handleUpdate(update, env) {
       ].join("\n");
     } catch (error) { console.error("LIBRARY FILE ERROR:", error); }
   }
+  const selectedSkills = selectSkills(text);
+  const useWebOpen = selectedSkills.some(skill => skill.name === "web_open");
   const useSearch = shouldWebSearch(text);
-  const useWebOpen = shouldWebOpen(text);
   const wantsFileOutput = shouldGenerateFile(text);
   let answer;
   try {
@@ -723,6 +716,10 @@ async function runAI(env, messages, temperature, maxTokens) {
   return response.trim();
 }
 
+
+function selectSkills(text) {
+  return SKILLS.filter(skill => skill.matches(text));
+}
 
 function shouldWebOpen(text) {
   const raw = String(text || "").trim();
