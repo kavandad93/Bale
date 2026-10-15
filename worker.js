@@ -417,18 +417,19 @@ async function handleUpdate(update, env) {
         webContext = "جست‌وجوی وب در دسترس نبود؛ ادعا نکن که جست‌وجو انجام شده است.";
       }
     }
-    answer = await askAI(env, userId, [webContext, fileContext].filter(Boolean).join("\n\n"));
+    const capabilityLabels = [];
+    if (useSearch && webContext && !webContext.startsWith("جست‌وجوی وب در دسترس نبود")) capabilityLabels.push("جست‌وجوی وب");
+    if (fileContext) capabilityLabels.push("کتابخانه فایل‌ها");
+    if (wantsFileOutput) capabilityLabels.push("تولید فایل");
+    if (capabilityLabels.length) await sendMessage(env, chatId, "*استفاده شده از قابلیت " + capabilityLabels.join("، ") + "*", message.message_id);
+    const outputInstruction = wantsFileOutput ? "کاربر فایل خروجی می‌خواهد. محتوای کامل فایل را فقط در یک کدبلاک با برچسب زبان مناسب مثل html یا php قرار بده." : "";
+    answer = await askAI(env, userId, [webContext, fileContext, outputInstruction].filter(Boolean).join("\n\n"));
   } catch (error) {
     console.error("AI ERROR:", error);
     answer = "⚠️ سرویس هوش مصنوعی فعلاً با خطا مواجه شد.\nلطفاً چند لحظه بعد دوباره امتحان کن.";
   }
 
   await saveMessage(env, userId, chatId, "assistant", answer);
-  const usedCapabilities = [];
-  if (useSearch && webContext && !webContext.startsWith("جست‌وجوی وب در دسترس نبود")) usedCapabilities.push("جست‌وجوی وب");
-  if (fileContext) usedCapabilities.push("کتابخانه فایل‌ها");
-  if (wantsFileOutput) usedCapabilities.push("تولید فایل");
-  if (usedCapabilities.length) await sendMessage(env, chatId, "*استفاده شده از قابلیت " + usedCapabilities.join("، ") + "*", message.message_id);
   if (wantsFileOutput) {
     const generated = extractGeneratedFile(answer, text, libraryFile?.file_name || uploadedFileName);
     if (generated) {
