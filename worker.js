@@ -136,6 +136,27 @@ export default {
   }
 };
 
+
+async function sandboxRequest(env, path, payload) {
+  const base = String(env.SANDBOX_API_URL || "").replace(/\/+$/, "");
+  if (!/^https:\/\//i.test(base)) throw new Error("SANDBOX_API_URL must use HTTPS");
+  const response = await fetch(base + path, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "authorization": "Bearer " + env.SANDBOX_API_TOKEN
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(20000)
+  });
+  const raw = await response.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { data = {}; }
+  if (!response.ok || data?.ok === false)
+    throw new Error("Sandbox API HTTP " + response.status + ": " + String(data?.error || raw).slice(0, 300));
+  return data;
+}
+
 async function bale(method, body, env) {
   if (!env.BALE_BOT_TOKEN) throw new Error("BALE_BOT_TOKEN تنظیم نشده است.");
 
@@ -391,6 +412,55 @@ async function handleUpdate(update, env) {
 
   await initDB(env);
   await saveUser(env, user);
+
+  // Provision one isolated sandbox per user. Provisioning failures must not break the chat bot.
+  if (env.SANDBOX_API_URL && env.SANDBOX_API_TOKEN) {
+    try {
+      await sandboxRequest(env, "/ensure", {
+        user_id: userId,
+        username: String(user.username || user.first_name || "")
+      });
+    } catch (error) {
+      console.error("SANDBOX ENSURE ERROR:", String(error?.message || error));
+    }
+  }
+
+  // Explicit sandbox commands are executed in the user's container, never on the Worker host.
+  const sandboxCommand = text.match(/^\/sb(?:\s+([\s\S]*))?$/i);
+  if (sandboxCommand) {
+    if (!env.SANDBOX_API_URL || !env.SANDBOX_API_TOKEN) {
+      await sendMessage(env, chatId, "⚠️ سرویس Sandbox هنوز به Worker وصل نشده است.", message.message_id);
+      return;
+    }
+    const command = String(sandboxCommand[1] || "").trim();
+    if (!command || /^(?:help|راهنما)$/i.test(command)) {
+      await sendMessage(env, chatId,
+        "🧪 Sandbox شخصی شما\n" +
+        "اجرای دستور: /sb python --version\n" +
+        "مثال: /sb python -c \"print(2+2)\"\n" +
+        "فایل‌ها در پوشهٔ شخصی شما باقی می‌مانند. دستورها فقط داخل محیط ایزوله اجرا می‌شوند.",
+        message.message_id
+      );
+      return;
+    }
+    try {
+      const result = await sandboxRequest(env, "/run", {
+        user_id: userId,
+        username: String(user.username || user.first_name || ""),
+        command
+      });
+      const output = [result.stdout || "", result.stderr ? "\\n[stderr]\\n" + result.stderr : ""].join("").trim();
+      await sendMessage(env, chatId,
+        (result.ok ? "🧪 خروجی Sandbox" : "⚠️ دستور با خطا تمام شد") + "\\n" +
+        (output || "(خروجی خالی)") + (result.exit_code !== undefined ? "\\n\nExit code: " + result.exit_code : ""),
+        message.message_id
+      );
+    } catch (error) {
+      console.error("SANDBOX RUN ERROR:", String(error?.message || error));
+      await sendMessage(env, chatId, "⚠️ اجرای دستور در Sandbox ناموفق بود. سرویس یا اتصال را بررسی کن.", message.message_id);
+    }
+    return;
+  }
 
   if (isAdmin && await handleAdminMessage(env, chatId, text, message.message_id))
     return;
