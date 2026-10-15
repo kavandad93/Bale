@@ -433,33 +433,32 @@ async function handleUpdate(update, env) {
     answer = "⚠️ سرویس هوش مصنوعی فعلاً با خطا مواجه شد.\nلطفاً چند لحظه بعد دوباره امتحان کن.";
   }
 
-  if (wantsFileOutput) {
-    let generated = extractGeneratedFile(answer, text, libraryFile?.file_name || uploadedFileName);
-    // If the model replies with an explanation/refusal instead of a fenced file, retry once with a strict file-only request.
-    if (!generated) {
-      try {
-        const retryContext = [
-          fileContext,
-          "خروجی قبلی به‌اشتباه توضیح بود و فایل تولید نکرد. اکنون درخواست کاربر را انجام بده و محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب قرار بده. هیچ متن یا توضیحی بیرون کدبلاک ننویس. Worker کدبلاک را به فایل واقعی تبدیل و ارسال می‌کند؛ از ناتوانی در ساخت فایل حرف نزن.",
-          "درخواست اصلی کاربر: " + text
-        ].filter(Boolean).join("\n\n");
-        const retryAnswer = await askAI(env, userId, retryContext);
-        const retryGenerated = extractGeneratedFile(retryAnswer, text, libraryFile?.file_name || uploadedFileName);
-        if (retryGenerated) {
-          answer = retryAnswer;
-          generated = retryGenerated;
-        } else {
-          console.error("FILE GENERATION RETRY DID NOT RETURN A CODE BLOCK");
-        }
-      } catch (retryError) {
-        console.error("FILE GENERATION RETRY ERROR:", retryError);
+  // Any fenced code block is automatically delivered as a document, even when the user did not explicitly ask for a file.
+  let generated = extractGeneratedFile(answer);
+  // Only retry when the user explicitly requested a file but the model failed to return a code block.
+  if (wantsFileOutput && !generated) {
+    try {
+      const retryContext = [
+        fileContext,
+        "خروجی قبلی به‌اشتباه توضیح بود و فایل تولید نکرد. اکنون درخواست کاربر را انجام بده و محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب قرار بده. هیچ متن یا توضیحی بیرون کدبلاک ننویس. Worker کدبلاک را به فایل واقعی تبدیل و ارسال می‌کند؛ از ناتوانی در ساخت فایل حرف نزن.",
+        "درخواست اصلی کاربر: " + text
+      ].filter(Boolean).join("\n\n");
+      const retryAnswer = await askAI(env, userId, retryContext);
+      const retryGenerated = extractGeneratedFile(retryAnswer);
+      if (retryGenerated) {
+        answer = retryAnswer;
+        generated = retryGenerated;
+      } else {
+        console.error("FILE GENERATION RETRY DID NOT RETURN A CODE BLOCK");
       }
+    } catch (retryError) {
+      console.error("FILE GENERATION RETRY ERROR:", retryError);
     }
-    if (generated) {
-      await saveMessage(env, userId, chatId, "assistant", "فایل خروجی ارسال شد: " + generated.name);
-      await sendDocument(env, chatId, generated.name, generated.content, message.message_id);
-      return;
-    }
+  }
+  if (generated) {
+    await saveMessage(env, userId, chatId, "assistant", "فایل خروجی ارسال شد: " + generated.name);
+    await sendDocument(env, chatId, generated.name, generated.content, message.message_id);
+    return;
   }
   await saveMessage(env, userId, chatId, "assistant", answer);
   await sendMessage(env, chatId, answer, message.message_id);
@@ -785,16 +784,33 @@ function shouldGenerateFile(text) {
     /(?:فایل(?:ی)? (?:بساز|تولید کن|بده|آماده کن|خروجی)|به صورت فایل|فایل html|فایل php|فایل txt|generate (?:a )?file|create (?:a )?file|as a file|send me the file)/i.test(value);
 }
 
-function extractGeneratedFile(answer, requestText, sourceFileName = "") {
-  const match = String(answer || "").match(/```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)\n```/);
+function extractGeneratedFile(answer) {
+  // Use the first fenced code block. Its language label determines the filename extension.
+  const match = String(answer || "").match(/```([a-zA-Z0-9_+-]*)[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```/);
   if (!match) return null;
-  const map = {html:"html",htm:"html",php:"php",txt:"txt",css:"css",js:"js",javascript:"js",json:"json",xml:"xml",python:"py",py:"py",sql:"sql",sh:"sh",ts:"ts",md:"md",csv:"csv"};
-  const lang = (match[1] || "").toLowerCase();
-  const requestedName = String(requestText || "").match(/(?:^|[\s"'«(])([^\s"'»()]+\.(?:html?|php|txt|css|js|json|xml|py|sql|sh|ts|md|csv))(?=$|[\s"'»),.!?])/i)?.[1];
-  const ext = map[lang] || ((normalize(requestText).match(/\b(html|php|txt|css|js|json|xml|py|sql)\b/i) || [])[1] || "txt").toLowerCase();
-  const safeRequestedName = requestedName ? requestedName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0,100) : "";
-  const base = String(sourceFileName || "").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0,35);
-  return { name: safeRequestedName || ((base ? base + "-output" : "kadad-generated") + "." + (map[ext] || ext)), content: match[2] };
+
+  const language = (match[1] || "").toLowerCase();
+  const extensions = {
+    html: "html", htm: "html", xhtml: "html",
+    php: "php", txt: "txt", text: "txt", plaintext: "txt",
+    css: "css", scss: "scss", less: "less",
+    js: "js", javascript: "js", mjs: "mjs", cjs: "cjs",
+    ts: "ts", typescript: "ts", jsx: "jsx", tsx: "tsx",
+    json: "json", jsonc: "json", xml: "xml", svg: "svg",
+    py: "py", python: "py", sql: "sql", sh: "sh", bash: "sh",
+    yaml: "yaml", yml: "yml", toml: "toml", ini: "ini",
+    md: "md", markdown: "md", csv: "csv", diff: "diff",
+    java: "java", c: "c", h: "h", cpp: "cpp", csharp: "cs",
+    cs: "cs", go: "go", rust: "rs", rs: "rs", ruby: "rb",
+    rb: "rb", kotlin: "kt", swift: "swift", dart: "dart",
+    lua: "lua", r: "r", perl: "pl", pl: "pl"
+  };
+  const safeLanguage = language.replace(/[^a-z0-9_-]/g, "").slice(0, 12);
+  const extension = extensions[language] || safeLanguage || "txt";
+  return {
+    name: "kadad_ai." + extension,
+    content: match[2]
+  };
 }
 
 async function sendDocument(env, chatId, fileName, content, replyTo = null) {
