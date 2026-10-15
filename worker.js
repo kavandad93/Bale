@@ -377,16 +377,27 @@ async function handleUpdate(update, env) {
     value => normalizeUsername(value) === adminUsername
   );
 
-  if (normalize(text) === "/start") {
-    await sendMessage(env, chatId,
-      "سلام 👋\nمن دستیار هوشمند کاداد هستم.\nهر سوالی داری بپرس.",
-      message.message_id
-    );
-    return;
-  }
-
-  if (normalize(text) === "/help") {
-    await sendMessage(env, chatId, "هر سوالی داری بپرس 🤖", message.message_id);
+  if (normalize(text) === "/start" || normalize(text) === "/help") {
+    await initDB(env);
+    await saveUser(env, user);
+    if (env.SANDBOX_API_URL && env.SANDBOX_API_TOKEN) {
+      try {
+        await sandboxRequest(env, "/ensure", {
+          user_id: String(user.id),
+          username: String(user.username || user.first_name || "")
+        });
+      } catch (error) {
+        console.error("SANDBOX ENSURE ERROR:", String(error?.message || error));
+      }
+    }
+    if (normalize(text) === "/start") {
+      await sendMessage(env, chatId,
+        "سلام 👋\\nمن دستیار هوشمند کاداد هستم.\\nهر سوالی داری بپرس.",
+        message.message_id
+      );
+    } else {
+      await sendMessage(env, chatId, "هر سوالی داری بپرس 🤖", message.message_id);
+    }
     return;
   }
 
