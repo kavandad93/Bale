@@ -147,7 +147,7 @@ async function sandboxRequest(env, path, payload) {
       "authorization": "Bearer " + env.SANDBOX_API_TOKEN
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(20000)
+    signal: AbortSignal.timeout(25000)
   });
   const raw = await response.text();
   let data;
