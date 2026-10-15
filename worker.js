@@ -776,17 +776,27 @@ async function findLibraryFile(env, userId, text) {
   return files.find(f => value.includes(normalize(f.file_name))) || files[0];
 }
 function shouldGenerateFile(text) {
-  return /(?:فایل(?:ی)? (?:بساز|تولید کن|بده|آماده کن|خروجی)|به صورت فایل|فایل html|فایل php|فایل txt|generate (?:a )?file|create (?:a )?file|as a file|send me the file)/i.test(normalize(text));
+  const raw = String(text || "").trim();
+  const value = normalize(raw);
+  // Detect explicit file-generation verbs even when a filename appears before the verb.
+  const hasFilename = /(?:^|[\\s"'«(])[^\\s"'»()]+\\.(?:html?|php|txt|css|js|json|xml|py|sql|sh|ts|md|csv)(?=$|[\\s"'»),.!?])/i.test(raw);
+  const hasCreateIntent = /(?:بساز|بسازش|ایجاد کن|تولید کن|درست کن|آماده کن|خروجی بگیر|بفرست|ذخیره کن|generate|create|make|write|build|export|send me)/i.test(value);
+  return (hasFilename && hasCreateIntent) ||
+    /(?:فایل(?:ی)? (?:بساز|تولید کن|بده|آماده کن|خروجی)|به صورت فایل|فایل html|فایل php|فایل txt|generate (?:a )?file|create (?:a )?file|as a file|send me the file)/i.test(value);
 }
+
 function extractGeneratedFile(answer, requestText, sourceFileName = "") {
   const match = String(answer || "").match(/```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)\n```/);
   if (!match) return null;
-  const map = {html:"html",htm:"html",php:"php",txt:"txt",css:"css",js:"js",javascript:"js",json:"json",xml:"xml",python:"py",py:"py",sql:"sql",sh:"sh",ts:"ts"};
+  const map = {html:"html",htm:"html",php:"php",txt:"txt",css:"css",js:"js",javascript:"js",json:"json",xml:"xml",python:"py",py:"py",sql:"sql",sh:"sh",ts:"ts",md:"md",csv:"csv"};
   const lang = (match[1] || "").toLowerCase();
+  const requestedName = String(requestText || "").match(/(?:^|[\s"'«(])([^\s"'»()]+\.(?:html?|php|txt|css|js|json|xml|py|sql|sh|ts|md|csv))(?=$|[\s"'»),.!?])/i)?.[1];
   const ext = map[lang] || ((normalize(requestText).match(/\b(html|php|txt|css|js|json|xml|py|sql)\b/i) || [])[1] || "txt").toLowerCase();
+  const safeRequestedName = requestedName ? requestedName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0,100) : "";
   const base = String(sourceFileName || "").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0,35);
-  return { name: (base ? base + "-output" : "kadad-generated") + "." + (map[ext] || ext), content: match[2] };
+  return { name: safeRequestedName || ((base ? base + "-output" : "kadad-generated") + "." + (map[ext] || ext)), content: match[2] };
 }
+
 async function sendDocument(env, chatId, fileName, content, replyTo = null) {
   const form = new FormData();
   form.append("chat_id", String(chatId));
