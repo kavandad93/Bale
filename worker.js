@@ -138,7 +138,7 @@ export default {
 
 
 async function sandboxRequest(env, path, payload) {
-  const base = String(env.SANDBOX_API_URL || "").replace(/\/+$/, "");
+  const base = String(env.SANDBOX_API_URL || "https://bs.wnat.ir:4323").replace(/\/+$/, "");
   if (!/^https:\/\//i.test(base)) throw new Error("SANDBOX_API_URL must use HTTPS");
   const response = await fetch(base + path, {
     method: "POST",
@@ -380,7 +380,7 @@ async function handleUpdate(update, env) {
   if (normalize(text) === "/start" || normalize(text) === "/help") {
     await initDB(env);
     await saveUser(env, user);
-    if (env.SANDBOX_API_URL && env.SANDBOX_API_TOKEN) {
+    if (env.SANDBOX_API_TOKEN) {
       try {
         await sandboxRequest(env, "/ensure", {
           user_id: String(user.id),
@@ -425,7 +425,7 @@ async function handleUpdate(update, env) {
   await saveUser(env, user);
 
   // Provision one isolated sandbox per user. Provisioning failures must not break the chat bot.
-  if (env.SANDBOX_API_URL && env.SANDBOX_API_TOKEN) {
+  if (env.SANDBOX_API_TOKEN) {
     try {
       await sandboxRequest(env, "/ensure", {
         user_id: userId,
