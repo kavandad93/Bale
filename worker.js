@@ -433,28 +433,62 @@ async function handleUpdate(update, env) {
     answer = "⚠️ سرویس هوش مصنوعی فعلاً با خطا مواجه شد.\nلطفاً چند لحظه بعد دوباره امتحان کن.";
   }
 
-  // Any fenced code block is automatically delivered as a document, even when the user did not explicitly ask for a file.
   let generated = extractGeneratedFile(answer);
-  // Only retry when the user explicitly requested a file but the model failed to return a code block.
-  if (wantsFileOutput && !generated) {
+  let generationError = null;
+
+  if (wantsFileOutput) {
     try {
-      const retryContext = [
-        fileContext,
-        "خروجی قبلی به‌اشتباه توضیح بود و فایل تولید نکرد. اکنون درخواست کاربر را انجام بده و محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب قرار بده. هیچ متن یا توضیحی بیرون کدبلاک ننویس. Worker کدبلاک را به فایل واقعی تبدیل و ارسال می‌کند؛ از ناتوانی در ساخت فایل حرف نزن.",
-        "درخواست اصلی کاربر: " + text
-      ].filter(Boolean).join("\n\n");
-      const retryAnswer = await askAI(env, userId, retryContext, 10000);
-      const retryGenerated = extractGeneratedFile(retryAnswer);
-      if (retryGenerated) {
-        answer = retryAnswer;
-        generated = retryGenerated;
-      } else {
-        console.error("FILE GENERATION RETRY DID NOT RETURN A CODE BLOCK");
+      if (!generated) {
+        const retryContext = [
+          fileContext,
+          "درخواست کاربر فایل است اما پاسخ قبلی کدبلاک قابل‌استخراج نداشت. فایل را از نو، کامل و در یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب تولید کن؛ هیچ توضیحی بیرون کدبلاک ننویس.",
+          "درخواست اصلی کاربر: " + text,
+          "پاسخ قبلی ناموفق: " + answer
+        ].filter(Boolean).join("\n\n");
+        answer = await askAI(env, userId, retryContext, 10000);
+        generated = extractGeneratedFile(answer);
       }
-    } catch (retryError) {
-      console.error("FILE GENERATION RETRY ERROR:", retryError);
+
+      for (let attempt = 0; generated && !generated.complete && attempt < 3; attempt++) {
+        const continuationContext = [
+          "ادامهٔ تولید فایلی که در پیام قبلی شروع شده است.",
+          "درخواست اصلی کاربر: " + text,
+          "زبان فایل: " + generated.language,
+          "محتوای تولیدشده تا اینجا (این محتوا را تکرار نکن):\n" + generated.content,
+          "خروجی قبلی قبل از بسته‌شدن کدبلاک قطع شده است. فقط ادامهٔ دقیق فایل را از آخرین کاراکتر موجود بنویس؛ کل فایل را از اول تکرار نکن. اگر فایل کامل شد، در انتها کدبلاک را با سه بک‌تیک ببند. هیچ توضیحی ننویس."
+        ].join("\n\n");
+        const continuation = await askAI(env, userId, continuationContext, 10000);
+        const continued = appendFileContinuation(generated, continuation);
+        if (!continued || continued.content.length <= generated.content.length) {
+          throw new Error("مدل ادامهٔ قابل‌استفاده‌ای برای فایل ناقص تولید نکرد.");
+        }
+        generated = continued;
+      }
+
+      if (!generated || !generated.complete) {
+        throw new Error("پس از تلاش مجدد، کدبلاک فایل هنوز کامل نشده است.");
+      }
+    } catch (error) {
+      generationError = String(error?.message || error);
+      console.error("FILE GENERATION FAILED:", error);
+      generated = null;
     }
   }
+
+  if (wantsFileOutput && !generated) {
+    try {
+      answer = await askAI(env, userId, [
+        "تلاش برای تولید و تکمیل فایل با خطا مواجه شد.",
+        "جزئیات خطا: " + (generationError || "پاسخ فایل کامل و قابل‌استخراج نبود."),
+        "درخواست اصلی کاربر: " + text,
+        "به فارسی، کوتاه و شفاف به کاربر بگو تولید فایل با خطا مواجه شد و فایل ارسال نشد. علت را فقط بر اساس جزئیات بالا بیان کن. کد یا کدبلاک تولید نکن و ادعا نکن فایل ارسال شده است."
+      ].join("\n\n"), 500);
+    } catch (reportError) {
+      console.error("FILE GENERATION FAILURE-REPORT ERROR:", reportError);
+      answer = "⚠️ تولید فایل با خطا مواجه شد و فایل ارسال نشد. لطفاً دوباره تلاش کن.";
+    }
+  }
+
   if (generated) {
     await saveMessage(env, userId, chatId, "assistant", "فایل خروجی ارسال شد: " + generated.name);
     await sendDocument(env, chatId, generated.name, generated.content, message.message_id);
@@ -785,11 +819,16 @@ function shouldGenerateFile(text) {
 }
 
 function extractGeneratedFile(answer) {
-  // Accept a fenced code block even if the model hits its output-token limit before closing the fence.
-  const match = String(answer || "").match(/```([a-zA-Z0-9_+-]*)[^\S\r\n]*\r?\n([\s\S]*?)(?:\r?\n```|$)/);
-  if (!match) return null;
-
-  const language = (match[1] || "").toLowerCase();
+  const source = String(answer || "");
+  const fence = String.fromCharCode(96).repeat(3);
+  const openerIndex = source.indexOf(fence);
+  if (openerIndex < 0) return null;
+  const lineEnd = source.indexOf("\n", openerIndex + fence.length);
+  if (lineEnd < 0) return null;
+  const language = source.slice(openerIndex + fence.length, lineEnd).trim().toLowerCase();
+  const start = lineEnd + 1;
+  const closingIndex = source.indexOf("\n" + fence, start);
+  const rawContent = closingIndex < 0 ? source.slice(start) : source.slice(start, closingIndex);
   const extensions = {
     html: "html", htm: "html", xhtml: "html",
     php: "php", txt: "txt", text: "txt", plaintext: "txt",
@@ -807,9 +846,23 @@ function extractGeneratedFile(answer) {
   };
   const safeLanguage = language.replace(/[^a-z0-9_-]/g, "").slice(0, 12);
   const extension = extensions[language] || safeLanguage || "txt";
-  return { name: "kadad_ai." + extension, content: match[2] };
+  return { name: "kadad_ai." + extension, language: language || extension, content: rawContent, complete: closingIndex >= 0 };
 }
 
+function appendFileContinuation(file, continuation) {
+  const rawSource = String(continuation || "");
+  if (!rawSource.trim()) return null;
+  const source = rawSource.trim();
+  const block = extractGeneratedFile(source);
+  let addition = block ? block.content : rawSource;
+  const fence = String.fromCharCode(96).repeat(3);
+  if (addition.endsWith("\n" + fence)) addition = addition.slice(0, -(fence.length + 1));
+  else if (addition.endsWith(fence)) addition = addition.slice(0, -fence.length);
+  if (!addition.trim()) return null;
+  const combined = file.content + addition;
+  const hasClosingFence = block ? block.complete : source.endsWith(fence);
+  return { ...file, content: combined, complete: hasClosingFence };
+}
 async function sendDocument(env, chatId, fileName, content, replyTo = null) {
   const form = new FormData();
   form.append("chat_id", String(chatId));
