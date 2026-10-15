@@ -427,7 +427,7 @@ async function handleUpdate(update, env) {
     if (wantsFileOutput) capabilityLabels.push("تولید فایل");
     if (capabilityLabels.length) await sendMessage(env, chatId, "*استفاده شده از قابلیت " + capabilityLabels.join("، ") + "*", message.message_id);
     const outputInstruction = wantsFileOutput ? "دستور قطعی برای تولید فایل: Worker بعد از پاسخ تو، کدبلاک را استخراج می‌کند و به شکل فایل واقعی از طریق بله ارسال می‌کند. پس هرگز نگو نمی‌توانی فایل فیزیکی/قابل‌دانلود بسازی و کاربر را به کپی‌کردن دستی کد ارجاع نده. فقط محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب (مثلاً html یا php) قرار بده. کدبلاک باید با یک خط جدید بعد از برچسب زبان شروع شود و خط جدید قبل از سه‌بکتیک پایانی داشته باشد. هیچ توضیحی بیرون کدبلاک ننویس." : "";
-    answer = await askAI(env, userId, [webContext, fileContext, outputInstruction].filter(Boolean).join("\n\n"), wantsFileOutput ? 4000 : 1200);
+    answer = await askAI(env, userId, [webContext, fileContext, outputInstruction].filter(Boolean).join("\n\n"), wantsFileOutput ? 10000 : 1200);
   } catch (error) {
     console.error("AI ERROR:", error);
     answer = "⚠️ سرویس هوش مصنوعی فعلاً با خطا مواجه شد.\nلطفاً چند لحظه بعد دوباره امتحان کن.";
@@ -443,7 +443,7 @@ async function handleUpdate(update, env) {
         "خروجی قبلی به‌اشتباه توضیح بود و فایل تولید نکرد. اکنون درخواست کاربر را انجام بده و محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب قرار بده. هیچ متن یا توضیحی بیرون کدبلاک ننویس. Worker کدبلاک را به فایل واقعی تبدیل و ارسال می‌کند؛ از ناتوانی در ساخت فایل حرف نزن.",
         "درخواست اصلی کاربر: " + text
       ].filter(Boolean).join("\n\n");
-      const retryAnswer = await askAI(env, userId, retryContext, 4000);
+      const retryAnswer = await askAI(env, userId, retryContext, 10000);
       const retryGenerated = extractGeneratedFile(retryAnswer);
       if (retryGenerated) {
         answer = retryAnswer;
