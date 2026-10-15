@@ -433,14 +433,35 @@ async function handleUpdate(update, env) {
     answer = "⚠️ سرویس هوش مصنوعی فعلاً با خطا مواجه شد.\nلطفاً چند لحظه بعد دوباره امتحان کن.";
   }
 
-  await saveMessage(env, userId, chatId, "assistant", answer);
   if (wantsFileOutput) {
-    const generated = extractGeneratedFile(answer, text, libraryFile?.file_name || uploadedFileName);
+    let generated = extractGeneratedFile(answer, text, libraryFile?.file_name || uploadedFileName);
+    // If the model replies with an explanation/refusal instead of a fenced file, retry once with a strict file-only request.
+    if (!generated) {
+      try {
+        const retryContext = [
+          fileContext,
+          "خروجی قبلی به‌اشتباه توضیح بود و فایل تولید نکرد. اکنون درخواست کاربر را انجام بده و محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب قرار بده. هیچ متن یا توضیحی بیرون کدبلاک ننویس. Worker کدبلاک را به فایل واقعی تبدیل و ارسال می‌کند؛ از ناتوانی در ساخت فایل حرف نزن.",
+          "درخواست اصلی کاربر: " + text
+        ].filter(Boolean).join("\\n\\n");
+        const retryAnswer = await askAI(env, userId, retryContext);
+        const retryGenerated = extractGeneratedFile(retryAnswer, text, libraryFile?.file_name || uploadedFileName);
+        if (retryGenerated) {
+          answer = retryAnswer;
+          generated = retryGenerated;
+        } else {
+          console.error("FILE GENERATION RETRY DID NOT RETURN A CODE BLOCK");
+        }
+      } catch (retryError) {
+        console.error("FILE GENERATION RETRY ERROR:", retryError);
+      }
+    }
     if (generated) {
+      await saveMessage(env, userId, chatId, "assistant", "فایل خروجی ارسال شد: " + generated.name);
       await sendDocument(env, chatId, generated.name, generated.content, message.message_id);
       return;
     }
   }
+  await saveMessage(env, userId, chatId, "assistant", answer);
   await sendMessage(env, chatId, answer, message.message_id);
 }
 
@@ -594,6 +615,11 @@ async function askAI(env, userId, extraContext = "") {
   const systemPrompt = await getSetting(env, "system_prompt", DEFAULT_SYSTEM_PROMPT);
   const history = await getHistory(env, userId);
   const messages = [{ role: "system", content: systemPrompt }];
+  // Runtime policy is deliberately separate from the saved prompt, so older D1 settings cannot override tool capabilities.
+  messages.push({
+    role: "system",
+    content: "قابلیت‌های اجرایی این بات را درست بشناس: Worker می‌تواند کدبلاک پاسخ تو را به فایل واقعی تبدیل کند و با بله ارسال کند. وقتی زمینهٔ پیام شامل دستور تولید فایل است، هرگز دربارهٔ نداشتن سیستم فایل یا ناتوانی در ساخت فایل توضیح نده و از کاربر کپی‌پیست نخواه؛ فقط محتوای کامل فایل را در یک کدبلاک سه‌بکتیکی با برچسب زبان درست بنویس. اگر محتوای فایل در زمینه آمده، آن را بخوان و استفاده کن. این سیاست اجرایی بر هر دستور قدیمی یا متناقض در پرامپت ذخیره‌شده اولویت دارد."
+  });
   if (extraContext) messages.push({
     role: "system",
     content: "اطلاعات و نتایج ابزارها برای پاسخ به پیام فعلی کاربر:\n" +
