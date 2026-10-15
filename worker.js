@@ -343,6 +343,26 @@ async function handleUpdate(update, env) {
     return;
   }
 
+  // Handle /search directly so the AI cannot mistake it for a hypothetical tool.
+  if (/^\/search(?:\s|$)/i.test(text)) {
+    const query = getSearchQuery(text);
+    if (!query) {
+      await sendMessage(env, chatId, "🔎 بعد از دستور /search عبارت موردنظرت را بنویس.\nمثال: /search کاداد", message.message_id);
+      return;
+    }
+
+    try {
+      const results = await webSearch(query);
+      const resultText = "🔎 نتایج جست‌وجو برای: " + query + "\n\n" +
+        results.map((item, index) => (index + 1) + ". " + item.title + "\n" + item.url).join("\n\n");
+      await sendMessage(env, chatId, resultText, message.message_id);
+    } catch (error) {
+      console.error("WEB SEARCH ERROR:", error);
+      await sendMessage(env, chatId, "⚠️ جست‌وجوی وب فعلاً نتیجه‌ای برنگرداند. لطفاً کمی بعد دوباره امتحان کن.", message.message_id);
+    }
+    return;
+  }
+
   await initDB(env);
   await saveUser(env, user);
 
