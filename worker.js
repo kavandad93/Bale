@@ -600,17 +600,17 @@ async function webSearch(query) {
     {
       name: "DuckDuckGo",
       url: "https://html.duckduckgo.com/html/?q=" + q,
-      parse: html => parseSearchAnchors(html, /<a\\b(?=[^>]*\\bclass=["'][^"']*\\bresult__a\\b[^"']*["'])[^>]*>[\\s\\S]*?<\\/a>/gi, "duckduckgo")
+      parse: html => parseSearchAnchors(html, /<a\b(?=[^>]*\bclass=["'][^"']*\bresult__a\b[^"']*["'])[^>]*>[\s\S]*?<\/a>/gi, "duckduckgo")
     },
     {
       name: "DuckDuckGo Lite",
       url: "https://lite.duckduckgo.com/lite/?q=" + q,
-      parse: html => parseSearchAnchors(html, /<a\\b[^>]*href=["'][^"']+["'][^>]*>[\\s\\S]*?<\\/a>/gi, "duckduckgo")
+      parse: html => parseSearchAnchors(html, /<a\b[^>]*href=["'][^"']+["'][^>]*>[\s\S]*?<\/a>/gi, "duckduckgo")
     },
     {
       name: "Bing",
       url: "https://www.bing.com/search?q=" + q,
-      parse: html => parseSearchAnchors(html, /<li\\b[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>[\\s\\S]*?<\\/li>/gi, "bing")
+      parse: html => parseSearchAnchors(html, /<li\b[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>[\s\S]*?<\/li>/gi, "bing")
     }
   ];
 
@@ -647,11 +647,11 @@ function parseSearchAnchors(html, pattern, provider) {
     let hrefMatch;
     let titleMatch;
     if (provider === "bing") {
-      hrefMatch = block.match(/<h2[^>]*>\\s*<a[^>]*href=["']([^"']+)["'][^>]*>/i);
-      titleMatch = block.match(/<h2[^>]*>\\s*<a[^>]*>([\\s\\S]*?)<\\/a>/i);
+      hrefMatch = block.match(/<h2[^>]*>\s*<a[^>]*href=["']([^"']+)["'][^>]*>/i);
+      titleMatch = block.match(/<h2[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i);
     } else {
-      hrefMatch = block.match(/\\bhref=["']([^"']+)["']/i);
-      titleMatch = block.match(/>([\\s\\S]*?)<\\/a>\\s*$/i);
+      hrefMatch = block.match(/\bhref=["']([^"']+)["']/i);
+      titleMatch = block.match(/>([\s\S]*?)<\/a>\s*$/i);
     }
     if (!hrefMatch) continue;
 
@@ -662,8 +662,8 @@ function parseSearchAnchors(html, pattern, provider) {
         href = parsed.searchParams.get("uddg") || href;
       }
     } catch {}
-    if (!/^https?:\\/\\//i.test(href)) continue;
-    if (/^(https?:\\/\\/)?(www\\.)?(bing\\.com|duckduckgo\\.com)\\//i.test(href)) continue;
+    if (!/^https?:\/\//i.test(href)) continue;
+    if (/^(https?:\/\/)?(www\.)?(bing\.com|duckduckgo\.com)\//i.test(href)) continue;
 
     const title = stripHtml(decodeHtml(titleMatch ? titleMatch[1] : ""));
     if (!title || title.length < 2) continue;
