@@ -77,7 +77,8 @@ const TEXT_FILE_EXTENSIONS = new Set(["txt","md","json","csv","tsv","log","js","
 const SKILLS = [
   {
     name: "web_open",
-    description: "Open and inspect a website URL, retrieve its readable HTML/text, title, and status, then use that page content to answer the user's request.",
+    description: "Open and inspect a specific website URL, retrieve its readable HTML/text, title, and HTTP status, then answer the user's request using the retrieved page content. This is a skill selected automatically from intent, not a chat command.",
+    instructions: "When selected, the Worker has already fetched the requested URL and inserted the page title, URL, HTTP status, and extracted text into the tool context. Analyze that supplied content directly. Do not ask the user what web_open means, do not claim you lack the ability to open URLs, and do not substitute web search for the fetched page. If the content is insufficient, state that limitation and ask what page/section they mean only if no URL was supplied.",
     matches: shouldWebOpen
   }
 ];
@@ -442,13 +443,16 @@ async function handleUpdate(update, env) {
       }
     }
     const capabilityLabels = [];
-    if (useWebOpen && webContext && !webContext.startsWith("باز کردن سایت ناموفق بود")) capabilityLabels.push("باز کردن سایت");
-    else if (useSearch && webContext && !webContext.startsWith("جست‌وجوی وب در دسترس نبود")) capabilityLabels.push("جست‌وجوی وب");
+    if (useWebOpen && webContext && !webContext.startsWith("باز کردن سایت ناموفق بود")) capabilityLabels.push("اسکیل web_open (باز کردن صفحه)");
+    else if (!useWebOpen && useSearch && webContext && !webContext.startsWith("جست‌وجوی وب در دسترس نبود")) capabilityLabels.push("جست‌وجوی وب");
     if (fileContext) capabilityLabels.push("کتابخانه فایل‌ها");
     if (wantsFileOutput) capabilityLabels.push("تولید فایل");
     if (capabilityLabels.length) await sendMessage(env, chatId, "*استفاده شده از قابلیت " + capabilityLabels.join("، ") + "*", message.message_id);
     const outputInstruction = wantsFileOutput ? "دستور قطعی برای تولید فایل: Worker بعد از پاسخ تو، کدبلاک را استخراج می‌کند و به شکل فایل واقعی از طریق بله ارسال می‌کند. پس هرگز نگو نمی‌توانی فایل فیزیکی/قابل‌دانلود بسازی و کاربر را به کپی‌کردن دستی کد ارجاع نده. فقط محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب (مثلاً html یا php) قرار بده. کدبلاک باید با یک خط جدید بعد از برچسب زبان شروع شود و خط جدید قبل از سه‌بکتیک پایانی داشته باشد. هیچ توضیحی بیرون کدبلاک ننویس." : "";
-    answer = await askAI(env, userId, [webContext, fileContext, outputInstruction].filter(Boolean).join("\n\n"), wantsFileOutput ? 10000 : 1200);
+    const selectedSkillContext = selectedSkills.map(skill =>
+      "اسکیل انتخاب‌شده: " + skill.name + "\nتوضیح: " + skill.description + "\nدستور اجرا: " + skill.instructions
+    ).join("\n\n");
+    answer = await askAI(env, userId, [selectedSkillContext, webContext, fileContext, outputInstruction].filter(Boolean).join("\n\n"), wantsFileOutput ? 10000 : 1200);
   } catch (error) {
     console.error("AI ERROR:", error);
     answer = "⚠️ سرویس هوش مصنوعی فعلاً با خطا مواجه شد.\nلطفاً چند لحظه بعد دوباره امتحان کن.";
@@ -723,10 +727,14 @@ function selectSkills(text) {
 
 function shouldWebOpen(text) {
   const raw = String(text || "").trim();
-  if (/^\/web_open(?:\s|$)/i.test(raw)) return true;
   const hasUrl = /https?:\/\/[^\s<>"']+/i.test(raw);
-  const intent = /(?:باز کن|بازش کن|صفحه(?:\s|‌)?(?:را|رو)?\s*باز|محتوای سایت|محتوای صفحه|open (?:the )?(?:website|site|url|page)|visit (?:the )?(?:website|site|url|page)|open url)/i.test(raw);
-  return hasUrl && intent;
+  if (/^\/web_open(?:\s|$)/i.test(raw)) return true;
+  if (!hasUrl) return false;
+
+  // Explicit skill selection must win even if the user doesn't use ordinary "open site" wording.
+  const namesSkill = /(?:\bweb[_ -]?open\b|اسکیل\s*web[_ -]?open|مهارت\s*web[_ -]?open)/i.test(raw);
+  const intent = /(?:باز کن|بازش کن|صفحه(?:\s|‌)?(?:را|رو)?\s*باز|محتوای سایت|محتوای صفحه|بررسی(?:\s|‌)?(?:کن|کنش)?|تحلیل(?:\s|‌)?(?:کن|کنش)?|بخون|بخوان|ببین|بازدید کن|open (?:the )?(?:website|site|url|page)|visit (?:the )?(?:website|site|url|page)|inspect (?:the )?(?:website|site|url|page)|read (?:the )?(?:website|site|url|page)|open url)/i.test(raw);
+  return namesSkill || intent;
 }
 
 function getWebOpenUrl(text) {
