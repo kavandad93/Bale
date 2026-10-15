@@ -442,7 +442,7 @@ async function handleUpdate(update, env) {
           fileContext,
           "خروجی قبلی به‌اشتباه توضیح بود و فایل تولید نکرد. اکنون درخواست کاربر را انجام بده و محتوای کامل فایل را در دقیقاً یک کدبلاک سه‌بکتیکی با برچسب زبان مناسب قرار بده. هیچ متن یا توضیحی بیرون کدبلاک ننویس. Worker کدبلاک را به فایل واقعی تبدیل و ارسال می‌کند؛ از ناتوانی در ساخت فایل حرف نزن.",
           "درخواست اصلی کاربر: " + text
-        ].filter(Boolean).join("\\n\\n");
+        ].filter(Boolean).join("\n\n");
         const retryAnswer = await askAI(env, userId, retryContext);
         const retryGenerated = extractGeneratedFile(retryAnswer, text, libraryFile?.file_name || uploadedFileName);
         if (retryGenerated) {
